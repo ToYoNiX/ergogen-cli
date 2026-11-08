@@ -15,7 +15,8 @@ const process = async (raw, options={}, logger=()=>{}) => {
     let empty = true
     let [config, format] = io.interpret(raw, logger)
     let suffix = format
-    let { debug = false, svg = false } = options
+    // shapes: also report where each outline part was placed (see outlines.js)
+    let { debug = false, svg = false, shapes = false } = options
     // KLE conversion warrants automaticly engaging debug mode
     // as, usually, we're only interested in the points anyway
     if (format == 'KLE') {
@@ -62,7 +63,11 @@ const process = async (raw, options={}, logger=()=>{}) => {
     }
 
     logger('Generating outlines...')
-    const outlines = outlines_lib.parse(config.outlines || {}, points, units)
+    const placed = shapes ? {} : undefined
+    const outlines = outlines_lib.parse(config.outlines || {}, points, units, placed)
+    if (shapes) {
+        results.shapes = placed
+    }
     results.outlines = {}
     for (const [name, outline] of Object.entries(outlines)) {
         if (!debug && name.startsWith('_')) continue
@@ -90,7 +95,7 @@ const process = async (raw, options={}, logger=()=>{}) => {
 
     if (!debug && empty) {
         logger('Output would be empty, rerunning in debug mode...')
-        return process(raw, {debug: true, svg}, () => {})
+        return process(raw, {debug: true, svg, shapes}, () => {})
     }
     return results
 }

@@ -331,7 +331,25 @@ const expand_shorthand = (config, name, units) => {
     }
 }
 
-exports.parse = (config, points, units) => {
+// Where each part of an outline ended up, for editors that let users pick and move parts:
+// every part in config order, and for each placement its point, position, rotation, and its
+// own outline as SVG path data in the coordinates of the outline's SVG export.
+const describe_placements = (parts, outline) => {
+    const extents = m.measure.modelExtents(outline)
+    const origin = extents ? [-extents.low[0], extents.high[1]] : [0, 0]
+    return {
+        extents: extents ? {low: extents.low, high: extents.high} : null,
+        parts: parts.map(part => ({
+            ...part,
+            placements: part.placements.map(({model, ...placement}) => {
+                const flat = m.model.originate(u.deepcopy(model))
+                return {...placement, path: m.exporter.toSVGPathData(flat, {byLayers: false, origin})}
+            })
+        }))
+    }
+}
+
+exports.parse = (config, points, units, shapes) => {
 
     // output outlines will be collected here
     const outlines = {}
@@ -342,6 +360,8 @@ exports.parse = (config, points, units) => {
 
         // placeholder for the current outline
         outlines[outline_name] = {models: {}}
+        // its parts and their placements, if the caller asked for shapes
+        const described = []
 
         // each export can consist of multiple parts
         // either sub-objects or arrays are fine...
@@ -360,7 +380,8 @@ exports.parse = (config, points, units) => {
             }
 
             // process keys that are common to all part declarations
-            const operation = u[a.in(part.operation || 'add', `${name}.operation`, ['add', 'subtract', 'intersect', 'stack'])]
+            const operation_name = a.in(part.operation || 'add', `${name}.operation`, ['add', 'subtract', 'intersect', 'stack'])
+            const operation = u[operation_name]
             const what = a.in(part.what || 'outline', `${name}.what`, ['rectangle', 'circle', 'polygon', 'outline', 'path', 'hull'])
             const bound = !!part.bound
             const asym = a.asym(part.asym || 'source', `${name}.asym`)
@@ -393,6 +414,9 @@ exports.parse = (config, points, units) => {
             const [shape_maker, shape_units] = whats[what](part, name, points, outlines, units)
             const adjust = start => anchor(original_adjust || {}, `${name}.adjust`, points, start)(shape_units)
 
+            const placements = []
+            if (shapes) described.push({name: part_name, what, operation: operation_name, placements})
+
             // and then the shape is repeated for all where positions
             for (const w of where(shape_units)) {
                 const point = adjust(w.clone())
@@ -401,6 +425,16 @@ exports.parse = (config, points, units) => {
                     shape = binding(shape, bbox, point, shape_units)
                 }
                 shape = point.position(shape) // ...actual positioning happens here
+                if (shapes) {
+                    placements.push({
+                        point: w.meta.name || null, // null when not placed on a named point
+                        x: point.x,
+                        y: point.y,
+                        r: point.r,
+                        mirrored: !!point.meta.mirrored,
+                        model: u.deepcopy(shape)
+                    })
+                }
                 outlines[outline_name] = operation(outlines[outline_name], shape)
             }
 
@@ -424,6 +458,8 @@ exports.parse = (config, points, units) => {
         // final adjustments
         m.model.originate(outlines[outline_name])
         m.model.simplify(outlines[outline_name])
+
+        if (shapes) shapes[outline_name] = describe_placements(described, outlines[outline_name])
 
     }
 
